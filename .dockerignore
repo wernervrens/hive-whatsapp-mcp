@@ -1,0 +1,5 @@
+.git
+whatsapp-bridge/store/
+*.db
+*.log
+whatsapp-mcp-server/.venv

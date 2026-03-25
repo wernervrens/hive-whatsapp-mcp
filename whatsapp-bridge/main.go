@@ -31,6 +31,45 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// webhookURL is the URL to POST incoming messages to. Set via WEBHOOK_URL env var.
+var webhookURL = os.Getenv("WEBHOOK_URL")
+
+// WebhookPayload is the JSON body sent to the webhook on each incoming message.
+type WebhookPayload struct {
+	MessageID  string    `json:"message_id"`
+	ChatJID    string    `json:"chat_jid"`
+	ChatName   string    `json:"chat_name"`
+	Sender     string    `json:"sender"`
+	Content    string    `json:"content"`
+	Timestamp  time.Time `json:"timestamp"`
+	IsFromMe   bool      `json:"is_from_me"`
+	MediaType  string    `json:"media_type,omitempty"`
+	Filename   string    `json:"filename,omitempty"`
+}
+
+// fireWebhook sends the payload to webhookURL in a background goroutine.
+func fireWebhook(payload WebhookPayload) {
+	if webhookURL == "" {
+		return
+	}
+	go func() {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			fmt.Printf("Webhook marshal error: %v\n", err)
+			return
+		}
+		resp, err := http.Post(webhookURL, "application/json", bytes.NewReader(body))
+		if err != nil {
+			fmt.Printf("Webhook delivery error: %v\n", err)
+			return
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			fmt.Printf("Webhook returned non-2xx status: %d\n", resp.StatusCode)
+		}
+	}()
+}
+
 // Message represents a chat message for our client
 type Message struct {
 	Time      time.Time
@@ -467,6 +506,18 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		} else if content != "" {
 			fmt.Printf("[%s] %s %s: %s\n", timestamp, direction, sender, content)
 		}
+
+		fireWebhook(WebhookPayload{
+			MessageID: msg.Info.ID,
+			ChatJID:   chatJID,
+			ChatName:  name,
+			Sender:    sender,
+			Content:   content,
+			Timestamp: msg.Info.Timestamp,
+			IsFromMe:  msg.Info.IsFromMe,
+			MediaType: mediaType,
+			Filename:  filename,
+		})
 	}
 }
 
@@ -641,7 +692,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	}
 
 	// Download the media using whatsmeow client
-	mediaData, err := client.Download(downloader)
+	mediaData, err := client.Download(context.Background(), downloader)
 	if err != nil {
 		return false, "", "", "", fmt.Errorf("failed to download media: %v", err)
 	}
@@ -800,14 +851,14 @@ func main() {
 		return
 	}
 
-	container, err := sqlstore.New("sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
+	container, err := sqlstore.New(context.Background(), "sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
 	if err != nil {
 		logger.Errorf("Failed to connect to database: %v", err)
 		return
 	}
 
 	// Get device store - This contains session information
-	deviceStore, err := container.GetFirstDevice()
+	deviceStore, err := container.GetFirstDevice(context.Background())
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// No device exists, create one
@@ -973,7 +1024,7 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 
 		// If we didn't get a name, try group info
 		if name == "" {
-			groupInfo, err := client.GetGroupInfo(jid)
+			groupInfo, err := client.GetGroupInfo(context.Background(), jid)
 			if err == nil && groupInfo.Name != "" {
 				name = groupInfo.Name
 			} else {
@@ -988,7 +1039,7 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 		logger.Infof("Getting name for contact: %s", chatJID)
 
 		// Just use contact info (full name)
-		contact, err := client.Store.Contacts.GetContact(jid)
+		contact, err := client.Store.Contacts.GetContact(context.Background(), jid)
 		if err == nil && contact.FullName != "" {
 			name = contact.FullName
 		} else if sender != "" {

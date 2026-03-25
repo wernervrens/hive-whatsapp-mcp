@@ -1,0 +1,19 @@
+services:
+  whatsapp-bridge:
+    build: .
+    container_name: whatsapp-mcp
+    restart: unless-stopped
+    volumes:
+      - whatsapp-store:/app/whatsapp-bridge/store
+    # Expose port if you need direct access to the bridge HTTP API
+    ports:
+      - "7070:8080"
+    environment:
+      # Set to your webhook endpoint to receive incoming message events
+      WEBHOOK_URL: "${WEBHOOK_URL}"
+    # Allocate a TTY so the QR code displays properly on first run
+    tty: true
+    stdin_open: true
+
+volumes:
+  whatsapp-store:
